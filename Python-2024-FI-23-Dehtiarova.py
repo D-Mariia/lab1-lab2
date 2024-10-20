@@ -1,209 +1,204 @@
 import time
+import numpy as np
 import matplotlib.pyplot as plt
 
-
-def mtime (func, *args, repeats=10):
-    start = time.time()
-    for _ in range(repeats):
-        result = func(*args)
-    end = time.time()
-    avg_time = (end - start) / repeats
-    return avg_time, result
-
-
 class Operations:
-    def __init__(self, hex_value):
-        self.bin_value = self.hex_to_bin(hex_value)
+    def __init__(self, words):
+        self.words = words
 
     @staticmethod
-    def hex_to_bin(hex_str):
-        return bin(int(hex_str, 16))[2:].zfill(2048)
+    def hex_to_words(hex_string):
+        num = int(hex_string, 16)
+        words = []
+        while num:
+            words.append(num & 0xFFFFFFFF)
+            num >>= 32
+        return words
 
-    @staticmethod
-    def bin_to_hex(bin_str):
-        return hex(int(bin_str, 2))[2:].lstrip('0').upper() or '0'
-
-    @staticmethod
-    def small_constant_to_bin(value):
-        if value not in (0, 1):
-            raise ValueError("Можливі тільки константи 0 або 1")
-        return str(value).zfill(2048)
+    def to_hex(self):
+        hex_string = ""
+        for word in reversed(self.words):
+            hex_string += f"{word:08x}"
+        return hex_string.lstrip("0") or "0"
 
     def add(self, other):
-        return self.bin_to_hex(self.add_binary(self.bin_value, other.bin_value))
-
-    @staticmethod
-    def add_binary(a, b):
-        max_len = max(len(a), len(b))
-        a = a.zfill(max_len)
-        b = b.zfill(max_len)
-
-        result = ''
+        max_len = max(len(self.words), len(other.words))
+        result = [0] * (max_len + 1)
         carry = 0
 
-        for i in range(max_len - 1, -1, -1):
-            r = carry
-            r += 1 if a[i] == '1' else 0
-            r += 1 if b[i] == '1' else 0
+        for i in range(max_len):
+            a = self.words[i] if i < len(self.words) else 0
+            b = other.words[i] if i < len(other.words) else 0
+            total = a + b + carry
+            result[i] = total & 0xFFFFFFFF
+            carry = total >> 32
 
-            result = ('1' if r % 2 == 1 else '0') + result
-            carry = 0 if r < 2 else 1
+        result[max_len] = carry
+        return Operations(words=result)
 
-        if carry != 0:
-            result = '1' + result
-
-        return result.zfill(2048)
-
-    @staticmethod
-    def subtract(a, b):
-        comparison = Operations.long_cmp(a, b)
-        if comparison == -1:
-            return "Помилка: неможливо відняти більше число від меншого."
-        return Operations.bin_to_hex(Operations.subtract_binary(a, b))
-
-    @staticmethod
-    def subtract_binary(a, b):
-        max_len = max(len(a), len(b))
-        a = a.zfill(max_len)
-        b = b.zfill(max_len)
-
-        result = ''
+    def subtract(self, other):
+        result = [0] * len(self.words)
         borrow = 0
 
-        for i in range(max_len - 1, -1, -1):
-            r = int(a[i]) - borrow
-            r -= int(b[i])
-
-            if r < 0:
-                r += 2
+        for i in range(len(self.words)):
+            total = self.words[i] - (other.words[i] if i < len(other.words) else 0) - borrow
+            if total < 0:
                 borrow = 1
+                total += 1 << 32
             else:
                 borrow = 0
+            result[i] = total & 0xFFFFFFFF
+        return Operations(words=result)
 
-            result = str(r) + result
+    def multiply(self, other):
+        result = [0] * (len(self.words) + len(other.words))
 
-        return result.lstrip('0').zfill(2048)
+        for i in range(len(self.words)):
+            carry = 0
+            for j in range(len(other.words)):
+                total = result[i + j] + self.words[i] * other.words[j] + carry
+                result[i + j] = total & 0xFFFFFFFF
+                carry = total >> 32
+
+            result[i + len(other.words)] += carry
+
+        while len(result) > 1 and result[-1] == 0:
+            result.pop()
+
+        return Operations(words=result)
+
+    def divide(self, other):
+        if len(other.words) == 1 and other.words[0] == 0:
+            raise ZeroDivisionError("Ділення на нуль")
+
+        dividend = self.words[:]
+        divisor = other.words[:]
+        quotient = [0] * (len(dividend) + 1)
+        remainder = [0] * len(dividend)
+
+        shift = 0
+        while len(divisor) > 1 and (divisor[-1] & (1 << 31)) == 0:
+            divisor = self.left_shift(divisor, 1)
+            shift += 1
+
+        for i in range(len(dividend) * 32 - 1, -1, -1):
+            remainder = self.left_shift(remainder, 1)
+            remainder[0] |= (dividend[i // 32] >> (i % 32)) & 1
+
+            if self.compare_words(remainder, divisor) >= 0:
+                remainder = self.subtract_words(remainder, divisor)
+                quotient[i // 32] |= 1 << (i % 32)
+
+        quotient_result = Operations(words=self.right_shift(quotient, shift))
+        remainder_result = Operations(words=remainder)
+
+        while len(quotient_result.words) > 1 and quotient_result.words[-1] == 0:
+            quotient_result.words.pop()
+
+        return quotient_result, remainder_result
 
     @staticmethod
-    def long_mul_one_digit(a, b_digit):
-        carry = 0
-        result = ['0'] * (len(a) + 1)
+    def left_shift(words, shift):
+        shifted = [0] * len(words)
+        for i in range(len(words)):
+            shifted[i] = (words[i] << shift) & 0xFFFFFFFF
+            if i > 0:
+                shifted[i] |= words[i - 1] >> (32 - shift)
+        return shifted
+
+    @staticmethod
+    def right_shift(words, shift):
+        shifted = [0] * len(words)
+        for i in range(len(words) - 1, -1, -1):
+            shifted[i] = (words[i] >> shift) & 0xFFFFFFFF
+            if i < len(words) - 1:
+                shifted[i] |= (words[i + 1] << (32 - shift)) & 0xFFFFFFFF
+        return shifted
+
+    @staticmethod
+    def compare_words(a, b):
+        len_a, len_b = len(a), len(b)
+        if len_a < len_b:
+            a.extend([0] * (len_b - len_a))
+        elif len_b < len_a:
+            b.extend([0] * (len_a - len_b))
 
         for i in range(len(a) - 1, -1, -1):
-            temp = int(a[i]) * b_digit + carry
-            result[i + 1] = str(temp % 2)
-            carry = temp // 2
-
-        result[0] = str(carry)
-        return ''.join(result).lstrip('0').zfill(2048)
-
-    @staticmethod
-    def long_mul(a, b):
-        result = '0' * (len(a) + len(b))
-
-        for i in range(len(b) - 1, -1, -1):
-            temp = Operations.long_mul_one_digit(a, int(b[i]))
-            temp = Operations.long_shift_digits_to_high(temp, len(b) - 1 - i)
-            result = Operations.add_binary(result, temp)
-
-        return Operations.bin_to_hex(result)
-
-    @staticmethod
-    def long_shift_digits_to_high(b, n):
-        return b + '0' * n
-
-    @staticmethod
-    def long_cmp(a, b):
-        a = a.lstrip('0')
-        b = b.lstrip('0')
-
-        if len(a) > len(b):
-            return 1
-        elif len(a) < len(b):
-            return -1
-
-        for i in range(len(a)):
             if a[i] > b[i]:
                 return 1
             elif a[i] < b[i]:
                 return -1
-
         return 0
 
     @staticmethod
-    def long_div_mod(a, b):
-        if b == '0':
-            return "Помилка: ділення на нуль."
-        if a == '0':
-            return ('0', '0')
+    def subtract_words(a, b):
+        result = [0] * len(a)
+        borrow = 0
+        for i in range(len(a)):
+            total = a[i] - (b[i] if i < len(b) else 0) - borrow
+            if total < 0:
+                borrow = 1
+                total += 1 << 32
+            else:
+                borrow = 0
+            result[i] = total & 0xFFFFFFFF
+        return result
 
-        R = a
-        Q = '0'
-        C = b
-        shift = 0
-
-        while Operations.long_cmp(R, C) >= 0:
-            C = Operations.long_shift_digits_to_high(b, shift)
-            shift += 1
-
-        while shift > 0:
-            shift -= 1
-            C = Operations.long_shift_digits_to_high(b, shift)
-
-            if Operations.long_cmp(R, C) >= 0:
-                R = Operations.subtract_binary(R, C)
-                Q = Operations.add_binary(Q, '1' + '0' * shift)
-
-        return (Operations.bin_to_hex(Q), Operations.bin_to_hex(R))  # Повертаємо частку і залишок
-
-    @staticmethod
-    def input_number(prompt):
-        while True:
-            hex_value = input(prompt)
-            try:
-                int(hex_value, 16)
-                return hex_value
-            except ValueError:
-                print("Невірний формат. Будь ласка, введіть 16-кове число.")
-
-    def square(self):
-        return Operations.long_mul(self.bin_value, self.bin_value)
-
-
+    def mtime(self, operation, other, iterations=100):
+        times = []
+        for _ in range(iterations):
+            start_time = time.time()
+            operation(other)
+            end_time = time.time()
+            times.append(end_time - start_time)
+        return np.mean(times)
 
 if __name__ == "__main__":
-    num1_hex = Operations.input_number("Введіть перше число (16-кове): ")
-    num2_hex = Operations.input_number("Введіть друге число (16-кове): ")
+    hex_input1 = input("Введіть перше велике число у шістнадцятковому форматі: ")
+    hex_input2 = input("Введіть друге велике число у шістнадцятковому форматі: ")
 
-    a = Operations(num1_hex)
-    b = Operations(num2_hex)
+    num1 = Operations(Operations.hex_to_words(hex_input1))
+    num2 = Operations(Operations.hex_to_words(hex_input2))
 
-    add_time, add_result = mtime(a.add, b)
-    sub_time, sub_result = mtime(Operations.subtract, a.bin_value, b.bin_value)
-    mul_time, mul_result = mtime(Operations.long_mul, a.bin_value, b.bin_value)
-    div_time, (div_quotient, div_remainder) = mtime(Operations.long_div_mod, a.bin_value, b.bin_value)
-    square_time, square_result = mtime(a.square)
+    operations = {
+        "Додавання": num1.add,
+        "Віднімання": num1.subtract,
+        "Множення": num1.multiply,
+        "Ділення": num1.divide,
+    }
 
-    print(f"Результат додавання: {add_result}")
-    print(f"Середній час виконання додавання: {add_time:.10f} сек")
+    results = {}
+    for name, func in operations.items():
+        mean_time = num1.mtime(func, num2)
+        if name == "Ділення":
+            quotient, remainder = func(num2)
+            results[name] = (mean_time, quotient.to_hex(), remainder.to_hex())
+        else:
+            result = func(num2)
+            results[name] = (mean_time, result.to_hex())
 
-    print(f"Результат віднімання: {sub_result}")
-    print(f"Середній час виконання віднімання: {sub_time:.10f} сек")
+    print("\nРезультати арифметичних операцій:")
+    for operation, (mean_time, *result) in results.items():
+        if len(result) > 1:
+            print(f"{operation}: {result[0]} (ціле)")
+            print(f"Час: {mean_time:.10f} секунд")
+            print(f"Залишок: {result[1]}\n")
+        else:
+            print(f"{operation}: {result[0]}")
+            print(f"Час: {mean_time:.10f} секунд\n")
 
-    print(f"Результат множення: {mul_result}")
-    print(f"Середній час виконання множення: {mul_time:.10f} сек")
+    labels = list(results.keys())
+    mean_times = [r[0] for r in results.values()]
 
-    print(f"Частка при діленні: {div_quotient}")
-    print(f"Залишок при діленні: {div_remainder}")
-    print(f"Середній час виконання ділення: {div_time:.10f} сек")
+    x = np.arange(len(labels))
 
-    print(f"Результат піднесення до квадрату: {square_result}")
-    print(f"Середній час виконання піднесення до квадрату: {square_time:.10f} сек")
+    fig, ax = plt.subplots()
+    ax.bar(x, mean_times, 0.4, label='Середній час')
+    ax.set_ylabel('Час (с)')
+    ax.set_title('Час виконання арифметичних операцій')
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.legend()
 
-    operations = ['Додавання', 'Віднімання', 'Множення', 'Ділення', 'Квадрат']
-    times = [add_time, sub_time, mul_time, div_time, square_time]
-
-    plt.barh(operations, times, color='green')
-    plt.xlabel('Час виконання (сек)')
-    plt.title('Час виконання арифметичних операцій')
+    plt.tight_layout()
     plt.show()
