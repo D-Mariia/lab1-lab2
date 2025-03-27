@@ -1,129 +1,65 @@
 import time
-import numpy as np
-import matplotlib.pyplot as plt
+from tabulate import tabulate
 
-class Operations:
-    def __init__(self, words):
-        self.words = words
+def hex_to_32(hex_num):
+    n = int(hex_num, 16)
+    array = []
+    while n:
+        array.append(n % 2**32)
+        n //= 2**32
+    return array
 
+
+class Long():
     @staticmethod
-    def hex_to_words(hex_string):
-        num = int(hex_string, 16)
-        words = []
-        while num:
-            words.append(num & 0xFFFFFFFF)
-            num >>= 32
-        return words
+    def add(a,b):
+        size = max(len(a),len(b))
 
-    def to_hex(self):
-        hex_string = ""
-        for word in reversed(self.words):
-            hex_string += f"{word:08x}"
-        return hex_string.lstrip("0") or "0"
+        a = a + [0] * (size - len(a))
+        b = b + [0] * (size - len(b))
 
-    def add(self, other):
-        max_len = max(len(self.words), len(other.words))
-        result = [0] * (max_len + 1)
+        result = [0] * (size + 1)
         carry = 0
 
-        for i in range(max_len):
-            a = self.words[i] if i < len(self.words) else 0
-            b = other.words[i] if i < len(other.words) else 0
-            total = a + b + carry
-            result[i] = total & 0xFFFFFFFF
-            carry = total >> 32
+        for i in range(size):
+            temp = a[i] + b[i] + carry
+            result [i] = temp & (2**32 - 1)
+            carry = temp >> 32
 
-        result[max_len] = carry
-        return Operations(words=result)
+        return result if result[-1] else result[:-1]
 
-    def subtract(self, other):
-        result = [0] * len(self.words)
+    @staticmethod
+    def sub(a,b):
+        size = max (len(a),len(b))
+
+        a = a + [0] * (size - len(a))
+        b = b + [0] * (size - len(b))
+
+        result = [0] * size
         borrow = 0
 
-        for i in range(len(self.words)):
-            total = self.words[i] - (other.words[i] if i < len(other.words) else 0) - borrow
-            if total < 0:
-                borrow = 1
-                total += 1 << 32
-            else:
+        for i in range(size):
+            temp = a[i] - b[i] - borrow
+            if temp >= 0:
+                result[i] = temp
                 borrow = 0
-            result[i] = total & 0xFFFFFFFF
-        return Operations(words=result)
+            else:
+                result[i] = temp + 2**32
+                borrow = 1
 
-    def multiply(self, other):
-        result = [0] * (len(self.words) + len(other.words))
-
-        for i in range(len(self.words)):
-            carry = 0
-            for j in range(len(other.words)):
-                total = result[i + j] + self.words[i] * other.words[j] + carry
-                result[i + j] = total & 0xFFFFFFFF
-                carry = total >> 32
-
-            result[i + len(other.words)] += carry
-
-        while len(result) > 1 and result[-1] == 0:
-            result.pop()
-
-        return Operations(words=result)
-
-    def divide(self, other):
-        if len(other.words) == 1 and other.words[0] == 0:
-            raise ZeroDivisionError("Ділення на нуль")
-
-        dividend = self.words[:]
-        divisor = other.words[:]
-        quotient = [0] * (len(dividend) + 1)
-        remainder = [0] * len(dividend)
-
-        shift = 0
-        while len(divisor) > 1 and (divisor[-1] & (1 << 31)) == 0:
-            divisor = self.left_shift(divisor, 1)
-            shift += 1
-
-        for i in range(len(dividend) * 32 - 1, -1, -1):
-            remainder = self.left_shift(remainder, 1)
-            remainder[0] |= (dividend[i // 32] >> (i % 32)) & 1
-
-            if self.compare_words(remainder, divisor) >= 0:
-                remainder = self.subtract_words(remainder, divisor)
-                quotient[i // 32] |= 1 << (i % 32)
-
-        quotient_result = Operations(words=self.right_shift(quotient, shift))
-        remainder_result = Operations(words=remainder)
-
-        while len(quotient_result.words) > 1 and quotient_result.words[-1] == 0:
-            quotient_result.words.pop()
-
-        return quotient_result, remainder_result
+        return result if result[-1] != 0 else result[:-1]
 
     @staticmethod
-    def left_shift(words, shift):
-        shifted = [0] * len(words)
-        for i in range(len(words)):
-            shifted[i] = (words[i] << shift) & 0xFFFFFFFF
-            if i > 0:
-                shifted[i] |= words[i - 1] >> (32 - shift)
-        return shifted
+    def cmp(a, b):
+        len_a = len(a)
+        len_b = len(b)
 
-    @staticmethod
-    def right_shift(words, shift):
-        shifted = [0] * len(words)
-        for i in range(len(words) - 1, -1, -1):
-            shifted[i] = (words[i] >> shift) & 0xFFFFFFFF
-            if i < len(words) - 1:
-                shifted[i] |= (words[i + 1] << (32 - shift)) & 0xFFFFFFFF
-        return shifted
+        if len_a > len_b:
+            return 1
+        elif len_a < len_b:
+            return -1
 
-    @staticmethod
-    def compare_words(a, b):
-        len_a, len_b = len(a), len(b)
-        if len_a < len_b:
-            a.extend([0] * (len_b - len_a))
-        elif len_b < len_a:
-            b.extend([0] * (len_a - len_b))
-
-        for i in range(len(a) - 1, -1, -1):
+        for i in range(len_a - 1, -1, -1):
             if a[i] > b[i]:
                 return 1
             elif a[i] < b[i]:
@@ -131,74 +67,123 @@ class Operations:
         return 0
 
     @staticmethod
-    def subtract_words(a, b):
-        result = [0] * len(a)
-        borrow = 0
+    def mul_one(a, digit):
+        n = len(a)
+        C = [0] * (n + 1)
+
+        carry = 0
+        for i in range(n):
+            temp = a[i] * digit + carry
+            C[i] = temp & (2 ** 32 - 1)
+            carry = temp >> 32
+
+        C[n] = carry
+        return C
+
+    @staticmethod
+    def mul(a, b):
+        n = min(len(a), len(b))
+        C = [0]
+
+        for i in range(n):
+            temp = Long.mul_one(a, b[i])
+            temp = [0] * i + temp
+            C = Long.add(C, temp)
+        return C
+
+    @staticmethod
+    def bit(a):
+        n = 32 * (len(a) - 1) + a[-1].bit_length()
+        return n
+
+    @staticmethod
+    def shift(a, shift):
+        if shift == 0:
+            return a
+        num_blocks = shift // 32
+        bit_shift = shift % 32
+        shifted_num = [0] * num_blocks
+        carry = 0
+
         for i in range(len(a)):
-            total = a[i] - (b[i] if i < len(b) else 0) - borrow
-            if total < 0:
-                borrow = 1
-                total += 1 << 32
-            else:
-                borrow = 0
-            result[i] = total & 0xFFFFFFFF
-        return result
+            block = a[i]
+            shifted_block = (block << bit_shift) | carry
+            shifted_num.append(shifted_block & (2 ** 32 - 1))
+            carry = block >> (32 - bit_shift)
+        if carry:
+            shifted_num.append(carry)
+        return shifted_num
 
-    def mtime(self, operation, other, iterations=100):
-        times = []
+
+    @staticmethod
+    def div(a,b):
+        k = Long.bit(b)
+        R = a
+        Q = [0] * len(a)
+
+        while Long.cmp(R,b) != -1 :
+            t = Long.bit(R)
+            C = Long.shift(b, t - k)
+
+            if Long.cmp(R,C) == -1:
+                t -= 1
+                C = Long.shift(b, t - k)
+
+            R = Long.sub(R, C)
+            Q[(t - k) // 32] = Q[(t - k) // 32] | 1 << ((t - k) % 32)
+
+        return Q, R
+
+    @staticmethod
+    def time(func, a, b, iterations=1000):
+        start_time = time.time()
         for _ in range(iterations):
-            start_time = time.time()
-            operation(other)
-            end_time = time.time()
-            times.append(end_time - start_time)
-        return np.mean(times)
+            func(a, b)
+        end_time = time.time()
+        return (end_time - start_time) / iterations
 
-if __name__ == "__main__":
-    hex_input1 = input("Введіть перше велике число у шістнадцятковому форматі: ")
-    hex_input2 = input("Введіть друге велике число у шістнадцятковому форматі: ")
+a = '6f18df13a563d96b3abdd33abaf605b0c41c9fa9ef9859ea87e6fc6e61e8687f906363a5b3c11933822abb67ea9e86f8f53aee31044fd11ccb0441184911ecd5928eb1c6a0911962fcc69498c4a16a65c5c51e8d464dc69144b76afbb7ef97911b1ac6c1a3eae29ede0df9d7c125cfc49597e80a41aaa92adf0d0de4929ad52'
+b = '6f2a4782244c271647890169026fcf4d14e5e17d97edb7ff034544b584464879c977aa43b058a97546cf299a110101ec26c7e641dfaa88a3b9bdc1'
 
-    num1 = Operations(Operations.hex_to_words(hex_input1))
-    num2 = Operations(Operations.hex_to_words(hex_input2))
+a = hex_to_32(a)
+b = hex_to_32(b)
 
-    operations = {
-        "Додавання": num1.add,
-        "Віднімання": num1.subtract,
-        "Множення": num1.multiply,
-        "Ділення": num1.divide,
-    }
+result_add = Long.add(a, b)
+result_add = ''.join(f'{x:08x}' for x in reversed(result_add)).lstrip('0') or '0'
+print("A+B:", result_add)
 
-    results = {}
-    for name, func in operations.items():
-        mean_time = num1.mtime(func, num2)
-        if name == "Ділення":
-            quotient, remainder = func(num2)
-            results[name] = (mean_time, quotient.to_hex(), remainder.to_hex())
-        else:
-            result = func(num2)
-            results[name] = (mean_time, result.to_hex())
+result_sub = Long.sub(a, b)
+result_sub = ''.join(f'{x:08x}' for x in reversed(result_sub)).lstrip('0') or '0'
+print("A-B:", result_sub)
 
-    print("\nРезультати арифметичних операцій:")
-    for operation, (mean_time, *result) in results.items():
-        if len(result) > 1:
-            print(f"{operation}: {result[0]} (ціле)")
-            print(f"Час: {mean_time:.10f} секунд")
-            print(f"Залишок: {result[1]}\n")
-        else:
-            print(f"{operation}: {result[0]}")
-            print(f"Час: {mean_time:.10f} секунд\n")
+result_mul = Long.mul(a, b)
+result_mul = ''.join(f'{x:08x}' for x in reversed(result_mul)).lstrip('0') or '0'
+print("A*B:", result_mul)
 
-    labels = list(results.keys())
-    mean_times = [r[0] for r in results.values()]
+result_sq = Long.mul(a, a)
+result_sq = ''.join(f'{x:08x}' for x in reversed(result_sq)).lstrip('0') or '0'
+print("A^2:", result_sq)
 
-    x = np.arange(len(labels))
+result_div = Long.div(a, b)
 
-    fig, ax = plt.subplots()
-    ax.bar(x, mean_times, 0.4, label='Середній час')
-    ax.set_ylabel('Час (с)')
-    ax.set_title('Час виконання арифметичних операцій')
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels)
-    ax.legend()
+q_result = ''.join(f'{x:08x}' for x in reversed(result_div[0])).lstrip('0') or '0'
+r_result = ''.join(f'{x:08x}' for x in reversed(result_div[1])).lstrip('0') or '0'
 
-    plt.tight_layout()
-    plt.show()
+print("Q:", q_result)
+print("R:", r_result)
+
+add_time = Long.time(Long.add, a, b)
+sub_time = Long.time(Long.sub, a, b)
+mul_time = Long.time(Long.mul, a, b)
+sq_time = Long.time(Long.mul, a, a)
+div_time = Long.time(Long.div, a, b)
+
+table = [
+    ["Додавання", f"{add_time:.8f} сек"],
+    ["Віднімання", f"{sub_time:.8f} сек"],
+    ["Множення", f"{mul_time:.8f} сек"],
+    ["Квадрат", f"{sq_time:.8f} сек"],
+    ["Ділення", f"{div_time:.8f} сек"],
+]
+
+print(tabulate(table, headers=["Операція", "Середній час"], tablefmt="simple"))
