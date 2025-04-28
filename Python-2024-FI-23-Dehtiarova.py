@@ -1,6 +1,7 @@
 import time
 from tabulate import tabulate
 
+
 def hex_to_32(hex_num):
     n = int(hex_num, 16)
     array = []
@@ -8,6 +9,11 @@ def hex_to_32(hex_num):
         array.append(n % 2**32)
         n //= 2**32
     return array
+
+
+def from32_to2(blocks):
+    binary_str = ''.join(f'{block:032b}' for block in reversed(blocks))
+    return binary_str.lstrip('0') or '0'
 
 
 class Long():
@@ -47,7 +53,10 @@ class Long():
                 result[i] = temp + 2**32
                 borrow = 1
 
-        return result if result[-1] != 0 else result[:-1]
+        while len(result) > 1 and result[-1] == 0:
+            result.pop()
+
+        return result
 
     @staticmethod
     def cmp(a, b):
@@ -114,6 +123,16 @@ class Long():
             shifted_num.append(carry)
         return shifted_num
 
+    @staticmethod
+    def shift_right(a):
+        carry = 0
+        for i in range(len(a) - 1, -1, -1):
+            current = (carry << 32) | a[i]
+            a[i] = current >> 1
+            carry = current & 1
+        while len(a) > 1 and a[-1] == 0:
+            a.pop()
+        return a
 
     @staticmethod
     def div(a,b):
@@ -134,19 +153,164 @@ class Long():
 
         return Q, R
 
+
     @staticmethod
-    def time(func, a, b, iterations=1000):
+    def time(func, a, b, iterations=100):
         start_time = time.time()
         for _ in range(iterations):
             func(a, b)
         end_time = time.time()
         return (end_time - start_time) / iterations
 
-a = '6f18df13a563d96b3abdd33abaf605b0c41c9fa9ef9859ea87e6fc6e61e8687f906363a5b3c11933822abb67ea9e86f8f53aee31044fd11ccb0441184911ecd5928eb1c6a0911962fcc69498c4a16a65c5c51e8d464dc69144b76afbb7ef97911b1ac6c1a3eae29ede0df9d7c125cfc49597e80a41aaa92adf0d0de4929ad52'
-b = '6f2a4782244c271647890169026fcf4d14e5e17d97edb7ff034544b584464879c977aa43b058a97546cf299a110101ec26c7e641dfaa88a3b9bdc1'
+    @staticmethod
+    def gcd(a, b):
+        a = a.copy()
+        b = b.copy()
+        d = [1]
+
+        while (a[0] % 2 == 0) and (b[0] % 2 == 0):
+            a = Long.shift_right(a)
+            b = Long.shift_right(b)
+            d = Long. mul_one(d, 2)
+
+        while a[0] % 2 == 0:
+            a = Long.shift_right(a)
+
+        while b != [0]:
+            while b[0] % 2 == 0:
+                b = Long.shift_right(b)
+
+            if Long.cmp(a, b) > 0:
+                a = Long.sub(a, b)
+            else:
+                b = Long.sub(b, a)
+
+        d = Long.mul(d, a)
+
+        while len(d) > 1 and d[-1] == 0:
+            d.pop()
+        return d
+
+    @staticmethod
+    def lcm(a, b):
+        if a == [0] or b == [0]:
+            return [0]
+
+        product = Long.mul(a.copy(), b.copy())
+        gcd_ab = Long.gcd(a.copy(), b.copy())
+
+        if Long.cmp(gcd_ab, [1]) == 0:
+            return product
+
+        q, _ = Long.div(product, gcd_ab)
+        return q
+
+    @staticmethod
+    def u(n, k):
+        b_2k = [0] * (2 * k) + [1]
+        u, _ = Long.div(b_2k, n)
+        return u
+
+    @staticmethod
+    def kill_last_digits(num, k):
+        if k < len(num):
+            num = num[k:]
+        else:
+            num = [0]
+        return num
+
+    @staticmethod
+    def barrett(x, n, u):
+        k = len(n)
+
+        q = Long.kill_last_digits(x, k - 1)
+        q = Long.mul(q, u)
+        q = Long.kill_last_digits(q, k + 1)
+        qn = Long.mul(q, n)
+
+        if len(qn) > len(x):
+            qn = qn[:len(x)]
+
+        r = Long.sub(x, qn)
+
+        while Long.cmp(r, n) >= 0:
+            r = Long.sub(r, n)
+
+        return r
+
+    @staticmethod
+    def add_mod(a, b, n):
+        k = len(n)
+        u = Long.u(n, k)
+
+        a = Long.barrett(a, n, u)
+        b = Long.barrett(b, n, u)
+        s = Long.barrett(Long.add(a, b), n, u)
+        return s
+
+    @staticmethod
+    def sub_mod(a, b, n):
+        k = len(n)
+        u = Long.u(n, k)
+
+        a = Long.barrett(a, n, u)
+        b = Long.barrett(b, n, u)
+
+        if Long.cmp(a, b) >= 0:
+            s = Long.sub(a, b)
+        else:
+            s = Long.add(Long.sub(a, b), n)
+
+        s = Long.barrett(s, n, u)
+        return s
+
+    @staticmethod
+    def mul_mod(a, b, n, u=None):
+        k = len(n)
+
+        if u is None:
+            u = Long.u(n, k)
+
+        a = Long.barrett(a, n, u)
+        b = Long.barrett(b, n, u)
+
+        result = Long.barrett(Long.mul(a, b), n, u)
+
+        return result
+
+
+    @staticmethod
+    def power_mod(a, b, n):
+        C = [1]
+        k = len(n)
+        u = Long.u(n, k)
+        a = Long.barrett(a, n, u)
+        b = from32_to2(b)
+        for i in range(len(b) - 1, -1, -1):
+            if b[i] == '1':
+                C = Long.mul_mod(a, C, n, u)
+            a = Long.mul_mod(a, a,  n, u)
+        return C
+
+    @staticmethod
+    def time_mod(func, a, b, n, iterations=10):
+        start_time = time.time()
+        for _ in range(iterations):
+            func(a, b, n)
+        end_time = time.time()
+        return (end_time - start_time) / iterations
+
+
+a = ''
+b = ''
+n = ''
+
 
 a = hex_to_32(a)
 b = hex_to_32(b)
+n = hex_to_32(n)
+
+#"""
 
 result_add = Long.add(a, b)
 result_add = ''.join(f'{x:08x}' for x in reversed(result_add)).lstrip('0') or '0'
@@ -172,11 +336,48 @@ r_result = ''.join(f'{x:08x}' for x in reversed(result_div[1])).lstrip('0') or '
 print("Q:", q_result)
 print("R:", r_result)
 
+result_gcd = Long.gcd(a, b)
+result_gcd = ''.join(f'{x:08x}' for x in reversed(result_gcd)).lstrip('0') or '0'
+print("НСД  :", result_gcd)
+
+result_lcm = Long.lcm(a, b)
+result_lcm = ''.join(f'{x:08x}' for x in reversed(result_lcm)).lstrip('0') or '0'
+print("НСК :", result_lcm)
+
+result_add_mod = Long.add_mod(a, b, n)
+result_add_mod = ''.join(f'{x:08x}' for x in reversed(result_add_mod)).lstrip('0') or '0'
+print("A+B mod N:", result_add_mod)
+
+result_sub_mod = Long.sub_mod(a, b, n)
+result_sub_mod = ''.join(f'{x:08x}' for x in reversed(result_sub_mod)).lstrip('0') or '0'
+print("A-B mod N:", result_sub_mod)
+
+result_mul_mod = Long.mul_mod(a, b, n)
+result_mul_mod = ''.join(f'{x:08x}' for x in reversed(result_mul_mod)).lstrip('0') or '0'
+print("A*B mod N:", result_mul_mod)
+
+result_mul_mod_2 = Long.mul_mod(a, a, n)
+result_mul_mod_2 = ''.join(f'{x:08x}' for x in reversed(result_mul_mod_2)).lstrip('0') or '0'
+print("A^2 mod N:", result_mul_mod_2)
+
+result_power_mod = Long.power_mod(a, b, n)
+result_power_mod = ''.join(f'{x:08x}' for x in reversed(result_power_mod)).lstrip('0') or '0'
+print("A^B mod N:", result_power_mod)
+
 add_time = Long.time(Long.add, a, b)
 sub_time = Long.time(Long.sub, a, b)
 mul_time = Long.time(Long.mul, a, b)
 sq_time = Long.time(Long.mul, a, a)
 div_time = Long.time(Long.div, a, b)
+
+gcd_time = Long.time(Long.gcd, a, a)
+lcm_time = Long.time(Long.lcm, a, b)
+
+add_mod_time = Long.time_mod(Long.add_mod, a, b, n)
+sub_mod_time = Long.time_mod(Long.sub_mod, a, b, n)
+mul_mod_time = Long.time_mod(Long.mul_mod, a, b, n)
+sq_mod_time = Long.time_mod(Long.mul_mod, a, a, n)
+pow_mod_time = Long.time_mod(Long.power_mod, a, b, n)
 
 table = [
     ["Додавання", f"{add_time:.8f} сек"],
@@ -184,6 +385,13 @@ table = [
     ["Множення", f"{mul_time:.8f} сек"],
     ["Квадрат", f"{sq_time:.8f} сек"],
     ["Ділення", f"{div_time:.8f} сек"],
+    ["НСД", f"{gcd_time:.8f} сек"],
+    ["НСК", f"{lcm_time:.8f} сек"],
+    ["Додавання(mod)", f"{add_mod_time:.8f} сек"],
+    ["Віднімання(mod)", f"{sub_mod_time:.8f} сек"],
+    ["Множення(mod)", f"{mul_mod_time:.8f} сек"],
+    ["Квадрат(mod)", f"{sq_mod_time:.8f} сек"],
+    ["Степінь(mod)", f"{pow_mod_time:.8f} сек"],
 ]
 
-print(tabulate(table, headers=["Операція", "Середній час"], tablefmt="simple"))
+print(tabulate(table, headers=["Операція ", "Середній час"], tablefmt="simple"))
